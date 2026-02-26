@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -18,7 +19,7 @@ class GatewayAction(BaseModel):
     objective: str
     required_skills: list[str] = Field(default_factory=list)
     tool_name: str | None = None
-    tool_payload: dict[str, str] = Field(default_factory=dict)
+    tool_payload: dict[str, Any] = Field(default_factory=dict)
 
 
 class GatewayNextAction(BaseModel):
