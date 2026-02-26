@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -24,9 +24,13 @@ class GatewayAction(BaseModel):
 
 class GatewayNextAction(BaseModel):
     summary: str
-    is_done: bool = False
+    decision: Literal["run_tool", "ask_for_skill", "final_response"] = "final_response"
     action: GatewayAction | None = None
     final_response: str | None = None
+
+    @property
+    def is_done(self) -> bool:
+        return self.decision == "final_response"
 
 
 class PlanningGatewayAgent:
@@ -81,14 +85,17 @@ class PlanningGatewayAgent:
         model: str,
         user_request: str,
         selected_skills: list[dict],
+        tool_names: list[str],
         execution_history: list[dict],
     ) -> GatewayNextAction:
         action_prompt = (
             "You are an execution coordinator. "
-            "Given the user request, selected skills, and execution history, decide the next action. "
-            "Return JSON only with keys: summary, is_done, action, final_response. "
-            "If is_done=true, set action=null and include final_response. "
-            "If is_done=false, set action with: step_id, title, objective, required_skills, tool_name, tool_payload."
+            "Given the user request, selected skill headers, available tools, and execution history, choose exactly one option. "
+            "Allowed options are: run_tool, ask_for_skill, final_response. "
+            "Return JSON only with keys: summary, decision, action, final_response. "
+            "For run_tool: set decision=run_tool and include action with step_id, title, objective, required_skills, tool_name, tool_payload. "
+            "For ask_for_skill: set decision=ask_for_skill and include action with required_skills listing skills to load; tool_name must be null. "
+            "For final_response: set decision=final_response, action=null, and include final_response."
         )
         payload = {
             "model": model,
@@ -100,6 +107,7 @@ class PlanningGatewayAgent:
                         {
                             "request": user_request,
                             "selected_skills": selected_skills,
+                            "tool_names": tool_names,
                             "execution_history": execution_history,
                         }
                     ),
@@ -118,7 +126,7 @@ class PlanningGatewayAgent:
         except Exception:
             return GatewayNextAction(
                 summary="Fallback next action due to non-JSON action output.",
-                is_done=True,
+                decision="final_response",
                 action=None,
                 final_response="I could not produce a structured next action, so I am returning a safe fallback response.",
             )

@@ -40,7 +40,7 @@ class FakeLLMClient:
                                 "content": json.dumps(
                                     {
                                         "summary": "Pick first action.",
-                                        "is_done": False,
+                                        "decision": "run_tool",
                                         "action": {
                                             "step_id": "step-1",
                                             "title": "Inspect repo",
@@ -66,7 +66,7 @@ class FakeLLMClient:
                             "content": json.dumps(
                                 {
                                     "summary": "Work completed.",
-                                    "is_done": True,
+                                    "decision": "final_response",
                                     "action": None,
                                     "final_response": "example response",
                                 }
@@ -101,6 +101,7 @@ def test_chat_completion_returns_skill_headers_by_default():
     assert payload["choices"][0]["message"]["content"] == "example response"
     assert payload["gateway_plan"]["selected_skills"] == ["repo-assistant"]
     assert payload["gateway_plan"]["is_done"] is True
+    assert payload["gateway_plan"]["decision"] == "final_response"
     assert payload["gateway_plan"]["execution_history"][0]["tool_name"] == "WebRequest"
     assert payload["gateway_plan"]["execution_history"][0]["tool_result"]["status"] == "error"
     assert payload["skill_headers"][0]["name"] == "repo-assistant"

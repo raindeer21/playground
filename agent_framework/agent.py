@@ -44,6 +44,7 @@ class LiteAgentRuntime:
                 request.model,
                 user_text,
                 selected_skill_headers,
+                self.tool_registry.list_names(),
                 execution_history,
             )
             final_action = next_action
@@ -69,12 +70,17 @@ class LiteAgentRuntime:
                 break
 
             tool_result = {"status": "skipped", "reason": "No tool requested"}
-            if next_action.action.tool_name and next_action.action.tool_name in self.tool_registry.list_names():
-                result = await self.tool_registry.call(
-                    next_action.action.tool_name,
-                    next_action.action.tool_payload or {"objective": next_action.action.objective},
-                )
-                tool_result = result.output
+            if next_action.decision == "run_tool":
+                if next_action.action.tool_name and next_action.action.tool_name in self.tool_registry.list_names():
+                    result = await self.tool_registry.call(
+                        next_action.action.tool_name,
+                        next_action.action.tool_payload or {"objective": next_action.action.objective},
+                    )
+                    tool_result = result.output
+                else:
+                    tool_result = {"status": "error", "error": "Requested tool is not available."}
+            elif next_action.decision == "ask_for_skill":
+                tool_result = {"status": "skipped", "reason": "Skill request only"}
 
             execution_history.append(
                 {
@@ -145,6 +151,7 @@ class LiteAgentRuntime:
                 "selected_skills": selected_skills,
                 "execution_summary": final_action.summary if final_action else "No execution output.",
                 "is_done": final_action.is_done if final_action else False,
+                "decision": final_action.decision if final_action else None,
                 "last_action": final_action.action.model_dump() if final_action and final_action.action else None,
                 "execution_history": execution_history,
             },
