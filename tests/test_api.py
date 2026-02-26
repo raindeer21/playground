@@ -8,8 +8,9 @@ from app.main import create_app
 class FakeLLMClient:
     async def chat_completion(self, payload):
         messages = payload.get("messages", [])
-        is_planner = any("planning gateway" in m.get("content", "").lower() for m in messages if m.get("role") == "system")
-        if is_planner:
+        system_text = "\n".join(m.get("content", "") for m in messages if m.get("role") == "system").lower()
+
+        if "planning gateway" in system_text:
             return {
                 "choices": [
                     {
@@ -17,27 +18,8 @@ class FakeLLMClient:
                             "role": "assistant",
                             "content": json.dumps(
                                 {
-                                    "summary": "Plan from planner LLM.",
-                                    "steps": [
-                                        {
-                                            "step_id": "step-1",
-                                            "title": "Understand",
-                                            "objective": "Understand request",
-                                            "required_skills": [],
-                                        },
-                                        {
-                                            "step_id": "step-2",
-                                            "title": "Match",
-                                            "objective": "Match skills",
-                                            "required_skills": ["repo-assistant"],
-                                        },
-                                        {
-                                            "step_id": "step-3",
-                                            "title": "Execute",
-                                            "objective": "Execute",
-                                            "required_skills": ["repo-assistant"],
-                                        },
-                                    ],
+                                    "summary": "Select repo skill for this task.",
+                                    "required_skills": ["repo-assistant"],
                                 }
                             ),
                         }
@@ -46,17 +28,56 @@ class FakeLLMClient:
                 "usage": {"prompt_tokens": 1, "completion_tokens": 2, "total_tokens": 3},
             }
 
-        return {
-            "choices": [
-                {
-                    "message": {
-                        "role": "assistant",
-                        "content": "example response",
-                    }
+        if "execution coordinator" in system_text:
+            request_blob = json.loads(messages[-1]["content"])
+            execution_history = request_blob.get("execution_history", [])
+            if not execution_history:
+                return {
+                    "choices": [
+                        {
+                            "message": {
+                                "role": "assistant",
+                                "content": json.dumps(
+                                    {
+                                        "summary": "Pick first action.",
+                                        "is_done": False,
+                                        "action": {
+                                            "step_id": "step-1",
+                                            "title": "Inspect repo",
+                                            "objective": "Inspect repository status",
+                                            "required_skills": [],
+                                            "tool_name": "git.status",
+                                            "tool_payload": {"command": "status"},
+                                        },
+                                        "final_response": None,
+                                    }
+                                ),
+                            }
+                        }
+                    ],
+                    "usage": {"prompt_tokens": 1, "completion_tokens": 2, "total_tokens": 3},
                 }
-            ],
-            "usage": {"prompt_tokens": 1, "completion_tokens": 2, "total_tokens": 3},
-        }
+
+            return {
+                "choices": [
+                    {
+                        "message": {
+                            "role": "assistant",
+                            "content": json.dumps(
+                                {
+                                    "summary": "Work completed.",
+                                    "is_done": True,
+                                    "action": None,
+                                    "final_response": "example response",
+                                }
+                            ),
+                        }
+                    }
+                ],
+                "usage": {"prompt_tokens": 1, "completion_tokens": 2, "total_tokens": 3},
+            }
+
+        return {"choices": [{"message": {"role": "assistant", "content": "fallback"}}], "usage": {}}
 
 
 def test_chat_completion_returns_skill_headers_by_default():
@@ -78,7 +99,9 @@ def test_chat_completion_returns_skill_headers_by_default():
     payload = response.json()
 
     assert payload["choices"][0]["message"]["content"] == "example response"
-    assert payload["gateway_plan"]["steps"][1]["required_skills"] == ["repo-assistant"]
+    assert payload["gateway_plan"]["selected_skills"] == ["repo-assistant"]
+    assert payload["gateway_plan"]["is_done"] is True
+    assert payload["gateway_plan"]["execution_history"][0]["tool_name"] == "git.status"
     assert payload["skill_headers"][0]["name"] == "repo-assistant"
     assert payload["full_skills"] is None
 
