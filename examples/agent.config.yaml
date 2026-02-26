@@ -1,0 +1,31 @@
+settings:
+  skills_dir: examples/skills
+  skills_docs_index: https://agentskills.io/llms.txt
+
+tools:
+  - name: filesystem.search
+    kind: mcp
+    description: Search local files through MCP server
+    settings:
+      server: local-files
+      timeout_ms: 3000
+
+  - name: git.status
+    kind: mcp
+    description: Read git status via MCP
+    settings:
+      server: local-git
+
+prompts:
+  - name: summarize_code
+    template: |
+      You are a coding agent. Summarize this file:
+      ---
+      ${content}
+      ---
+    variables: [content]
+
+  - name: planner
+    template: |
+      Build a short plan for this request: ${request}
+    variables: [request]
