@@ -3,18 +3,9 @@ settings:
   skills_docs_index: https://agentskills.io/llms.txt
 
 tools:
-  - name: filesystem.search
-    kind: mcp
-    description: Search local files through MCP server
-    settings:
-      server: local-files
-      timeout_ms: 3000
-
-  - name: git.status
-    kind: mcp
-    description: Read git status via MCP
-    settings:
-      server: local-git
+  - name: WebRequest
+    kind: function
+    description: Make an HTTP request with method, url, headers, and payload
 
 prompts:
   - name: summarize_code
