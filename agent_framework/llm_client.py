@@ -14,7 +14,8 @@ class LLMClient:
 
     async def chat_completion(self, payload: dict[str, Any]) -> dict[str, Any]:
         headers = {"Authorization": f"Bearer {self.api_key}"}
-        async with httpx.AsyncClient(timeout=60.0) as client:
+        async with httpx.AsyncClient(trust_env=False, timeout=60.0) as client:
+            print(payload)
             response = await client.post(
                 f"{self.base_url}/chat/completions",
                 headers=headers,

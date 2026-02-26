@@ -68,7 +68,7 @@ def test_chat_completion_returns_skill_headers_by_default():
     response = client.post(
         "/api/v1/chat",
         json={
-            "model": "demo-model",
+            "model": "qwen3-32b",
             "messages": [{"role": "user", "content": "review repository and run tests"}],
             "metadata": {},
         },
@@ -76,6 +76,7 @@ def test_chat_completion_returns_skill_headers_by_default():
 
     assert response.status_code == 200
     payload = response.json()
+
     assert payload["choices"][0]["message"]["content"] == "example response"
     assert payload["gateway_plan"]["steps"][1]["required_skills"] == ["repo-assistant"]
     assert payload["skill_headers"][0]["name"] == "repo-assistant"
@@ -91,7 +92,7 @@ def test_chat_completion_returns_full_skills_when_requested():
     response = client.post(
         "/api/v1/chat",
         json={
-            "model": "demo-model",
+            "model": "qwen3-32b",
             "messages": [{"role": "user", "content": "review repository and run tests"}],
             "metadata": {"include_full_skills": True},
         },
