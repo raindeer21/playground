@@ -23,43 +23,37 @@ def _function_call_message(name: str, arguments: dict):
 
 
 class FakeLLMClient:
-    async def chat_completion(self, payload):
-        messages = payload.get("messages", [])
-        system_text = "\n".join(m.get("content", "") for m in messages if m.get("role") == "system").lower()
+    async def plan_with_agent_executor(self, *, model, system_prompt, user_input, tools, temperature=0.1):
+        assert "execution coordinator" in system_prompt.lower()
+        request_blob = json.loads(user_input)
+        tool_specs = request_blob.get("tool_specs", [])
+        assert tool_specs and tool_specs[0]["name"] == "WebRequest"
+        execution_history = request_blob.get("execution_history", [])
 
-        if "execution coordinator" in system_text:
-            assert "exactly one function call" in system_text
-            assert payload["tool_choice"] == "required"
-            request_blob = json.loads(messages[-1]["content"])
-            tool_specs = request_blob.get("tool_specs", [])
-            assert tool_specs and tool_specs[0]["name"] == "WebRequest"
-            execution_history = request_blob.get("execution_history", [])
-            if not execution_history:
-                return {
-                    "choices": [
-                        {
-                            "message": _function_call_message(
-                                "WebRequest",
-                                {"url": "https://example.com", "method": "GET"},
-                            )
-                        }
-                    ],
-                    "usage": {"prompt_tokens": 1, "completion_tokens": 2, "total_tokens": 3},
-                }
-
+        if not execution_history:
             return {
                 "choices": [
                     {
                         "message": _function_call_message(
-                            "final_response",
-                            {"summary": "Work completed.", "response": "example response"},
+                            "WebRequest",
+                            {"url": "https://example.com", "method": "GET"},
                         )
                     }
                 ],
                 "usage": {"prompt_tokens": 1, "completion_tokens": 2, "total_tokens": 3},
             }
 
-        return {"choices": [{"message": {"role": "assistant", "content": "fallback"}}], "usage": {}}
+        return {
+            "choices": [
+                {
+                    "message": _function_call_message(
+                        "final_response",
+                        {"summary": "Work completed.", "response": "example response"},
+                    )
+                }
+            ],
+            "usage": {"prompt_tokens": 1, "completion_tokens": 2, "total_tokens": 3},
+        }
 
 
 def test_chat_completion_runs_direct_tool_calls_and_finishes():
@@ -88,46 +82,42 @@ def test_chat_completion_runs_direct_tool_calls_and_finishes():
 
 
 class AskForSkillThenFinishLLMClient:
-    async def chat_completion(self, payload):
-        messages = payload.get("messages", [])
-        system_text = "\n".join(m.get("content", "") for m in messages if m.get("role") == "system").lower()
+    async def plan_with_agent_executor(self, *, model, system_prompt, user_input, tools, temperature=0.1):
+        assert "execution coordinator" in system_prompt.lower()
+        request_blob = json.loads(user_input)
+        execution_history = request_blob.get("execution_history", [])
 
-        if "execution coordinator" in system_text:
-            request_blob = json.loads(messages[-1]["content"])
-            execution_history = request_blob.get("execution_history", [])
-            if not execution_history:
-                return {
-                    "choices": [
-                        {
-                            "message": _function_call_message(
-                                "ask_for_skill",
-                                {
-                                    "summary": "Need full skill details before acting.",
-                                    "step_id": "step-1",
-                                    "title": "Load skill",
-                                    "objective": "Load repo-assistant full skill.",
-                                    "required_skills": ["repo-assistant"],
-                                },
-                            )
-                        }
-                    ],
-                    "usage": {"prompt_tokens": 1, "completion_tokens": 2, "total_tokens": 3},
-                }
-
-            assert request_blob["selected_skills"][0]["name"] == "repo-assistant"
+        if not execution_history:
             return {
                 "choices": [
                     {
                         "message": _function_call_message(
-                            "final_response",
-                            {"summary": "Done", "response": "done with full skill"},
+                            "ask_for_skill",
+                            {
+                                "summary": "Need full skill details before acting.",
+                                "step_id": "step-1",
+                                "title": "Load skill",
+                                "objective": "Load repo-assistant full skill.",
+                                "required_skills": ["repo-assistant"],
+                            },
                         )
                     }
                 ],
                 "usage": {"prompt_tokens": 1, "completion_tokens": 2, "total_tokens": 3},
             }
 
-        return {"choices": [{"message": {"role": "assistant", "content": "fallback"}}], "usage": {}}
+        assert request_blob["selected_skills"][0]["name"] == "repo-assistant"
+        return {
+            "choices": [
+                {
+                    "message": _function_call_message(
+                        "final_response",
+                        {"summary": "Done", "response": "done with full skill"},
+                    )
+                }
+            ],
+            "usage": {"prompt_tokens": 1, "completion_tokens": 2, "total_tokens": 3},
+        }
 
 
 def test_chat_completion_returns_full_skills_when_llm_requests_skill():
@@ -157,23 +147,18 @@ def test_gateway_fallback_when_non_function_output():
     app = create_app()
 
     class NonFunctionLLMClient:
-        async def chat_completion(self, payload):
-            messages = payload.get("messages", [])
-            system_text = "\n".join(m.get("content", "") for m in messages if m.get("role") == "system").lower()
-            if "execution coordinator" in system_text:
-                return {
-                    "choices": [
-                        {
-                            "message": {
-                                "role": "assistant",
-                                "content": "plain text instead of function call",
-                            }
+        async def plan_with_agent_executor(self, *, model, system_prompt, user_input, tools, temperature=0.1):
+            return {
+                "choices": [
+                    {
+                        "message": {
+                            "role": "assistant",
+                            "content": "plain text instead of function call",
                         }
-                    ],
-                    "usage": {"prompt_tokens": 1, "completion_tokens": 2, "total_tokens": 3},
-                }
-
-            return {"choices": [{"message": {"role": "assistant", "content": "fallback"}}], "usage": {}}
+                    }
+                ],
+                "usage": {"prompt_tokens": 1, "completion_tokens": 2, "total_tokens": 3},
+            }
 
     app.state.runtime.llm_client = NonFunctionLLMClient()
     app.state.runtime.gateway_agent.llm_client = app.state.runtime.llm_client

@@ -168,21 +168,14 @@ class PlanningGatewayAgent:
             "instruction": "Return exactly one function call only.",
         }
 
-        payload = {
-            "model": model,
-            "messages": [
-                {"role": "system", "content": action_prompt},
-                {"role": "user", "content": json.dumps(self._drop_empty_values(request_blob))},
-            ],
-            "tools": [self.ASK_FOR_SKILL_TOOL, self.FINAL_RESPONSE_TOOL, *tool_specs],
-            "tool_choice": "required",
-            "temperature": 0.1,
-            "max_tokens": 400,
-            "stream": False,
-        }
-
         try:
-            result = await self.llm_client.chat_completion(payload)
+            result = await self.llm_client.plan_with_agent_executor(
+                model=model,
+                system_prompt=action_prompt,
+                user_input=json.dumps(self._drop_empty_values(request_blob)),
+                tools=[self.ASK_FOR_SKILL_TOOL, self.FINAL_RESPONSE_TOOL, *tool_specs],
+                temperature=0.1,
+            )
             available_tool_names = {spec.get("name") for spec in tool_specs if spec.get("name")}
             return self._extract_action_from_tool_call(result, available_tool_names)
         except Exception:

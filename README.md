@@ -11,7 +11,7 @@ The runtime now includes an **LLM-based planning/gateway agent** that creates a 
 - Offline-first deployment (local API + local skill files)
 - MCP tool registration (config-driven)
 - Prompt registry (config-driven)
-- Planning/gateway orchestration (example implementation)
+- Planning/gateway orchestration via LangChain AgentExecutor (example implementation)
 - Agent Skill spec-compatible loading from `SKILL.md` frontmatter
 - LangChain-powered OpenAI-compatible LLM API forwarding
 
@@ -46,6 +46,10 @@ This scaffold expects each skill at:
 - `description`
 
 and `name` must match the parent directory name.
+
+## AgentExecutor note
+
+The planning layer uses LangChain `AgentExecutor` with `create_tool_calling_agent` to choose one next function call (`ask_for_skill`, `final_response`, or configured external tools like `WebRequest`) per step.
 
 ## API Example
 
