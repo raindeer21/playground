@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field
@@ -34,6 +35,33 @@ class PlanningGatewayAgent:
     def __init__(self, llm_client: LLMClient) -> None:
         self.llm_client = llm_client
 
+    @staticmethod
+    def _extract_structured_json(raw: str) -> dict[str, Any]:
+        """Extract first valid JSON object from model output."""
+
+        text = raw.strip()
+        if text.startswith("```"):
+            text = re.sub(r"^```(?:json)?\\s*", "", text)
+            text = re.sub(r"\\s*```$", "", text)
+
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError:
+            pass
+
+        decoder = json.JSONDecoder()
+        for idx, char in enumerate(text):
+            if char != "{":
+                continue
+            try:
+                candidate, _ = decoder.raw_decode(text[idx:])
+                if isinstance(candidate, dict):
+                    return candidate
+            except json.JSONDecodeError:
+                continue
+
+        raise ValueError("No JSON object found in model output")
+
     async def decide_next_action(
         self,
         model: str,
@@ -47,9 +75,12 @@ class PlanningGatewayAgent:
             "Given the user request, selected skill headers, available tool specs, and execution history, choose exactly one option. "
             "Allowed options are: run_tool, ask_for_skill, final_response. "
             "Return JSON only with keys: summary, decision, action, final_response. "
+            "Do not include markdown fences, commentary, or any extra fields. "
+            "Never include reasoning_content or chain-of-thought. "
             "For run_tool: set decision=run_tool and include action with step_id, title, objective, required_skills, tool_name, tool_payload. "
             "For ask_for_skill: set decision=ask_for_skill and include action with required_skills listing skills to load; tool_name must be null. "
-            "For final_response: set decision=final_response, action=null, and include final_response."
+            "For final_response: set decision=final_response, action=null, and include final_response. "
+            "If selected_skills is empty, do not invent new skills; prefer final_response that asks for the minimum missing details."
         )
         payload = {
             "model": model,
@@ -68,14 +99,56 @@ class PlanningGatewayAgent:
                 },
             ],
             "temperature": 0.1,
-            "max_tokens": 700,
+            "max_tokens": 400,
+            "response_format": {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "gateway_next_action",
+                    "schema": {
+                        "type": "object",
+                        "properties": {
+                            "summary": {"type": "string"},
+                            "decision": {
+                                "type": "string",
+                                "enum": ["run_tool", "ask_for_skill", "final_response"],
+                            },
+                            "action": {
+                                "type": ["object", "null"],
+                                "properties": {
+                                    "step_id": {"type": "string"},
+                                    "title": {"type": "string"},
+                                    "objective": {"type": "string"},
+                                    "required_skills": {
+                                        "type": "array",
+                                        "items": {"type": "string"},
+                                    },
+                                    "tool_name": {"type": ["string", "null"]},
+                                    "tool_payload": {"type": "object"},
+                                },
+                                "required": [
+                                    "step_id",
+                                    "title",
+                                    "objective",
+                                    "required_skills",
+                                    "tool_name",
+                                    "tool_payload",
+                                ],
+                                "additionalProperties": False,
+                            },
+                            "final_response": {"type": ["string", "null"]},
+                        },
+                        "required": ["summary", "decision", "action", "final_response"],
+                        "additionalProperties": False,
+                    },
+                },
+            },
             "stream": False,
         }
         result = await self.llm_client.chat_completion(payload)
         raw = result["choices"][0]["message"]["content"]
 
         try:
-            data = json.loads(raw)
+            data = self._extract_structured_json(raw)
             return GatewayNextAction.model_validate(data)
         except Exception:
             return GatewayNextAction(

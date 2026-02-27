@@ -195,3 +195,44 @@ def test_chat_completion_returns_full_skills_when_llm_requests_skill():
     assert payload["gateway_plan"]["decision"] == "final_response"
     assert "repo-assistant" in payload["full_skills"]
     assert "# Repo Assistant" in payload["full_skills"]["repo-assistant"]
+
+
+def test_gateway_parser_accepts_json_wrapped_in_text():
+    app = create_app()
+
+    class WrappedJSONLLMClient:
+        async def chat_completion(self, payload):
+            messages = payload.get("messages", [])
+            system_text = "\n".join(m.get("content", "") for m in messages if m.get("role") == "system").lower()
+            if "execution coordinator" in system_text:
+                return {
+                    "choices": [
+                        {
+                            "message": {
+                                "role": "assistant",
+                                "content": "reasoning...\n```json\n{\"summary\":\"done\",\"decision\":\"final_response\",\"action\":null,\"final_response\":\"ok\"}\n```",
+                            }
+                        }
+                    ],
+                    "usage": {"prompt_tokens": 1, "completion_tokens": 2, "total_tokens": 3},
+                }
+
+            return {"choices": [{"message": {"role": "assistant", "content": "fallback"}}], "usage": {}}
+
+    app.state.runtime.llm_client = WrappedJSONLLMClient()
+    app.state.runtime.gateway_agent.llm_client = app.state.runtime.llm_client
+
+    client = TestClient(app)
+    response = client.post(
+        "/api/v1/chat",
+        json={
+            "model": "qwen3-32b",
+            "messages": [{"role": "user", "content": "help"}],
+            "metadata": {},
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["choices"][0]["message"]["content"] == "ok"
+    assert payload["gateway_plan"]["decision"] == "final_response"
