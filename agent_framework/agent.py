@@ -121,11 +121,12 @@ class LiteAgentRuntime:
 
         if final_action and final_action.is_done and final_action.final_response:
             assistant_message = ChatMessage(role="assistant", content=final_action.final_response)
-            upstream_usage = {}
         else:
-            upstream = await self.llm_client.chat_completion(request.model_dump())
-            assistant_message = ChatMessage.model_validate(upstream["choices"][0]["message"])
-            upstream_usage = upstream.get("usage", {})
+            assistant_message = ChatMessage(
+                role="assistant",
+                content="I could not complete the function-calling workflow. Please retry.",
+            )
+        upstream_usage = {}
 
         full_skills = None
         if include_full_for_skills:
