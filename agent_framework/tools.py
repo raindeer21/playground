@@ -70,7 +70,20 @@ async def web_request_tool(payload: dict[str, Any]) -> dict[str, Any]:
 
 class ToolRegistry:
     def __init__(self, tools: list[ToolConfig]) -> None:
-        self._tool_names = [tool.name for tool in tools if tool.name == "WebRequest"]
+        self._tool_configs = {tool.name: tool for tool in tools if tool.name == "WebRequest"}
+        self._tool_names = list(self._tool_configs)
+
+    def list_specs(self) -> list[dict[str, Any]]:
+        specs: list[dict[str, Any]] = []
+        for tool in self._tool_configs.values():
+            specs.append(
+                {
+                    "name": tool.name,
+                    "description": tool.description,
+                    "args_schema": tool.args_schema,
+                }
+            )
+        return specs
 
     def list_names(self) -> list[str]:
         return self._tool_names

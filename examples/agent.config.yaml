@@ -6,6 +6,25 @@ tools:
   - name: WebRequest
     kind: function
     description: Make an HTTP request with method, url, headers, and payload
+    args_schema:
+      type: object
+      properties:
+        method:
+          type: string
+          description: HTTP method
+          default: GET
+          enum: [GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS]
+        url:
+          type: string
+          description: Absolute URL to request
+        headers:
+          type: object
+          description: Optional request headers
+          additionalProperties:
+            type: string
+        payload:
+          description: Optional request payload (JSON object/list, string, or bytes)
+      required: [url]
 
 prompts:
   - name: summarize_code

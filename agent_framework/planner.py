@@ -39,12 +39,12 @@ class PlanningGatewayAgent:
         model: str,
         user_request: str,
         selected_skills: list[dict],
-        tool_names: list[str],
+        tool_specs: list[dict],
         execution_history: list[dict],
     ) -> GatewayNextAction:
         action_prompt = (
             "You are an execution coordinator. "
-            "Given the user request, selected skill headers, available tools, and execution history, choose exactly one option. "
+            "Given the user request, selected skill headers, available tool specs, and execution history, choose exactly one option. "
             "Allowed options are: run_tool, ask_for_skill, final_response. "
             "Return JSON only with keys: summary, decision, action, final_response. "
             "For run_tool: set decision=run_tool and include action with step_id, title, objective, required_skills, tool_name, tool_payload. "
@@ -61,7 +61,7 @@ class PlanningGatewayAgent:
                         {
                             "request": user_request,
                             "selected_skills": selected_skills,
-                            "tool_names": tool_names,
+                            "tool_specs": tool_specs,
                             "execution_history": execution_history,
                         }
                     ),
