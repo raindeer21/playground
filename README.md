@@ -13,7 +13,7 @@ The runtime now includes an **LLM-based planning/gateway agent** that creates a 
 - Prompt registry (config-driven)
 - Planning/gateway orchestration (example implementation)
 - Agent Skill spec-compatible loading from `SKILL.md` frontmatter
-- Upstream OpenAI-compatible LLM API forwarding
+- LangChain-powered OpenAI-compatible LLM API forwarding
 
 ## Quick Start
 
@@ -21,6 +21,7 @@ The runtime now includes an **LLM-based planning/gateway agent** that creates a 
 python -m venv .venv
 source .venv/bin/activate
 pip install -e .
+# Uses langchain-openai under the hood for model calls
 uvicorn app.main:app --reload --port 8000
 ```
 
