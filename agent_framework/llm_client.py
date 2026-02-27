@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
@@ -39,15 +40,43 @@ class LLMClient:
             temperature=payload.get("temperature", 0),
             max_retries=2,
         )
+        tools = payload.get("tools")
+        tool_choice = payload.get("tool_choice")
+
+        if tools:
+            bind_kwargs: dict[str, Any] = {}
+            if tool_choice is not None:
+                bind_kwargs["tool_choice"] = tool_choice
+            client = client.bind_tools(tools, **bind_kwargs)
+
         ai_message = await client.ainvoke(self._to_langchain_messages(payload.get("messages", [])))
 
         usage = getattr(ai_message, "usage_metadata", None) or {}
+        tool_calls = []
+        for call in getattr(ai_message, "tool_calls", []) or []:
+            arguments = call.get("args", {})
+            if isinstance(arguments, str):
+                arguments = arguments
+            else:
+                arguments = json.dumps(arguments)
+            tool_calls.append(
+                {
+                    "id": call.get("id", ""),
+                    "type": "function",
+                    "function": {
+                        "name": call.get("name", ""),
+                        "arguments": arguments,
+                    },
+                }
+            )
+
         return {
             "choices": [
                 {
                     "message": {
                         "role": "assistant",
                         "content": ai_message.content,
+                        "tool_calls": tool_calls or None,
                     }
                 }
             ],

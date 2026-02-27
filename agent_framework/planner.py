@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import re
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field
@@ -32,35 +31,104 @@ class GatewayNextAction(BaseModel):
 class PlanningGatewayAgent:
     """LLM-based planning/gateway layer with skill-header-first routing."""
 
+    ASK_FOR_SKILL_TOOL = {
+        "type": "function",
+        "function": {
+            "name": "ask_for_skill",
+            "description": "Request one or more skills to be loaded before continuing.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "summary": {"type": "string"},
+                    "step_id": {"type": "string"},
+                    "title": {"type": "string"},
+                    "objective": {"type": "string"},
+                    "required_skills": {"type": "array", "items": {"type": "string"}},
+                },
+                "required": ["summary", "step_id", "title", "objective", "required_skills"],
+                "additionalProperties": False,
+            },
+        },
+    }
+
+    FINAL_RESPONSE_TOOL = {
+        "type": "function",
+        "function": {
+            "name": "final_response",
+            "description": "Finish the workflow and return the final response to the user.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "summary": {"type": "string"},
+                    "response": {"type": "string"},
+                },
+                "required": ["summary", "response"],
+                "additionalProperties": False,
+            },
+        },
+    }
+
     def __init__(self, llm_client: LLMClient) -> None:
         self.llm_client = llm_client
 
     @staticmethod
-    def _extract_structured_json(raw: str) -> dict[str, Any]:
-        """Extract first valid JSON object from model output."""
+    def _parse_arguments(raw_arguments: Any) -> dict[str, Any]:
+        if isinstance(raw_arguments, dict):
+            return raw_arguments
+        if isinstance(raw_arguments, str):
+            return json.loads(raw_arguments or "{}")
+        return {}
 
-        text = raw.strip()
-        if text.startswith("```"):
-            text = re.sub(r"^```(?:json)?\\s*", "", text)
-            text = re.sub(r"\\s*```$", "", text)
+    def _extract_action_from_tool_call(self, response: dict[str, Any], available_tool_names: set[str]) -> GatewayNextAction:
+        message = response.get("choices", [{}])[0].get("message", {})
+        tool_calls = message.get("tool_calls") or []
+        if not tool_calls:
+            raise ValueError("Model did not return any tool call")
 
-        try:
-            return json.loads(text)
-        except json.JSONDecodeError:
-            pass
+        call = tool_calls[0]
+        function = call.get("function", {})
+        name = function.get("name")
+        arguments = self._parse_arguments(function.get("arguments"))
 
-        decoder = json.JSONDecoder()
-        for idx, char in enumerate(text):
-            if char != "{":
-                continue
-            try:
-                candidate, _ = decoder.raw_decode(text[idx:])
-                if isinstance(candidate, dict):
-                    return candidate
-            except json.JSONDecodeError:
-                continue
+        if name == "ask_for_skill":
+            return GatewayNextAction(
+                summary=arguments.get("summary", "Requesting skills."),
+                decision="ask_for_skill",
+                action=GatewayAction(
+                    step_id=arguments.get("step_id", "step-skill"),
+                    title=arguments.get("title", "Load skill"),
+                    objective=arguments.get("objective", "Load required skill content"),
+                    required_skills=arguments.get("required_skills", []),
+                    tool_name=None,
+                    tool_payload={},
+                ),
+                final_response=None,
+            )
 
-        raise ValueError("No JSON object found in model output")
+        if name == "final_response":
+            return GatewayNextAction(
+                summary=arguments.get("summary", "Completed."),
+                decision="final_response",
+                action=None,
+                final_response=arguments.get("response", ""),
+            )
+
+        if name in available_tool_names:
+            return GatewayNextAction(
+                summary=f"Running tool {name}.",
+                decision="run_tool",
+                action=GatewayAction(
+                    step_id=f"step-{name.lower()}",
+                    title=f"Run {name}",
+                    objective=f"Execute {name} requested by planner",
+                    required_skills=[],
+                    tool_name=name,
+                    tool_payload=arguments,
+                ),
+                final_response=None,
+            )
+
+        raise ValueError(f"Unknown function call: {name}")
 
     async def decide_next_action(
         self,
@@ -84,21 +152,11 @@ class PlanningGatewayAgent:
         }
 
         action_prompt = (
-            "You are an execution coordinator. "
-            "Given the user request, selected_skills (full content only for skills previously requested via ask_for_skill), available_skills (headers for all skills), available tool specs, and execution history, choose exactly one option. "
-            "Allowed options are: run_tool, ask_for_skill, final_response. "
-            "Return JSON only with keys: summary, decision, action, final_response. "
-            "Do not include markdown fences, commentary, or any extra fields. "
-            "Never include reasoning_content or chain-of-thought. "
-            "For run_tool: set decision=run_tool and include action with step_id, title, objective, required_skills, tool_name, tool_payload. "
-            "For ask_for_skill: set decision=ask_for_skill and include action with required_skills listing skills to load; tool_name must be null. "
-            "For final_response: set decision=final_response, action=null, and include final_response. "
-            "If selected_skills is empty, ask_for_skill is allowed when a skill is needed; otherwise continue with tools or final_response. "
-            "Example run_tool output: {\"summary\":\"Need fetch\",\"decision\":\"run_tool\",\"action\":{\"step_id\":\"step-1\",\"title\":\"Fetch listings\",\"objective\":\"Query listings API\",\"required_skills\":[\"housing-search\"],\"tool_name\":\"WebRequest\",\"tool_payload\":{\"method\":\"GET\",\"url\":\"https://example.com/listings\"}},\"final_response\":null}. "
-            "Example ask_for_skill output: {\"summary\":\"Need policy details\",\"decision\":\"ask_for_skill\",\"action\":{\"step_id\":\"step-2\",\"title\":\"Load skill\",\"objective\":\"Load repo-assistant full content\",\"required_skills\":[\"repo-assistant\"],\"tool_name\":null,\"tool_payload\":{}},\"final_response\":null}. "
-            "Example final_response output: {\"summary\":\"Need user input\",\"decision\":\"final_response\",\"action\":null,\"final_response\":\"Please share budget and preferred district.\"}. "
-            "For every turn, use previous_action and previous_result when present, then decide and return the explicit next step. "
-            "Always answer the question: what is the single best next step now?"
+            "You are an execution coordinator. Always respond with exactly one function call and no text. "
+            "Allowed function calls are ask_for_skill, final_response, and any provided external tool function. "
+            "Use ask_for_skill when you need full skill bodies. "
+            "Use external tool calls directly when execution is needed. "
+            "Use final_response only when ready to answer the user."
         )
         request_blob = {
             "request": user_request,
@@ -107,31 +165,29 @@ class PlanningGatewayAgent:
             "tool_specs": tool_specs,
             "execution_history": execution_history,
             "previous_step_context": previous_step_context,
-            "instruction": "Return the next step only as JSON with summary/decision/action/final_response.",
+            "instruction": "Return exactly one function call only.",
         }
 
         payload = {
             "model": model,
             "messages": [
                 {"role": "system", "content": action_prompt},
-                {
-                    "role": "user",
-                    "content": json.dumps(self._drop_empty_values(request_blob)),
-                },
+                {"role": "user", "content": json.dumps(self._drop_empty_values(request_blob))},
             ],
+            "tools": [self.ASK_FOR_SKILL_TOOL, self.FINAL_RESPONSE_TOOL, *tool_specs],
+            "tool_choice": "required",
             "temperature": 0.1,
             "max_tokens": 400,
             "stream": False,
         }
-        result = await self.llm_client.chat_completion(payload)
-        raw = result["choices"][0]["message"]["content"]
 
         try:
-            data = self._extract_structured_json(raw)
-            return GatewayNextAction.model_validate(data)
+            result = await self.llm_client.chat_completion(payload)
+            available_tool_names = {spec.get("name") for spec in tool_specs if spec.get("name")}
+            return self._extract_action_from_tool_call(result, available_tool_names)
         except Exception:
             return GatewayNextAction(
-                summary="Fallback next action due to non-JSON action output.",
+                summary="Fallback next action due to missing/invalid function call output.",
                 decision="final_response",
                 action=None,
                 final_response="I could not produce a structured next action, so I am returning a safe fallback response.",
@@ -140,15 +196,8 @@ class PlanningGatewayAgent:
     @staticmethod
     def _drop_empty_values(value: Any) -> Any:
         if isinstance(value, dict):
-            cleaned = {
-                key: PlanningGatewayAgent._drop_empty_values(item)
-                for key, item in value.items()
-            }
-            return {
-                key: item
-                for key, item in cleaned.items()
-                if item is not None and item != "" and item != [] and item != {}
-            }
+            cleaned = {key: PlanningGatewayAgent._drop_empty_values(item) for key, item in value.items()}
+            return {key: item for key, item in cleaned.items() if item is not None and item != "" and item != [] and item != {}}
         if isinstance(value, list):
             cleaned = [PlanningGatewayAgent._drop_empty_values(item) for item in value]
             return [item for item in cleaned if item is not None and item != "" and item != [] and item != {}]
