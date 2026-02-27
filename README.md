@@ -51,6 +51,36 @@ and `name` must match the parent directory name.
 
 The planning layer uses LangChain `AgentExecutor` with `create_tool_calling_agent` to choose one next function call (`ask_for_skill`, `final_response`, or configured external tools like `WebRequest`) per step.
 
+
+## Standalone tool-calling agent class
+
+If you want a direct LangChain tool-calling implementation (independent from the planning gateway), use `LangChainToolCallingAgent` in `agent_framework/langchain_tool_agent.py`.
+
+It wires:
+- `create_tool_calling_agent`
+- `AgentExecutor`
+- Configured tools from `ToolRegistry`
+
+Example:
+
+```python
+from agent_framework.config import ConfigStore
+from agent_framework.tools import ToolRegistry
+from agent_framework.langchain_tool_agent import LangChainToolCallingAgent
+
+config = ConfigStore("examples/agent.config.yaml")
+registry = ToolRegistry(config.list_tools())
+
+agent = LangChainToolCallingAgent(
+    model="gpt-4o-mini",
+    api_key="sk-...",
+    base_url="http://127.0.0.1:8000/v1",
+    tool_registry=registry,
+)
+
+result = await agent.ainvoke("Fetch https://example.com and summarize it")
+```
+
 ## API Example
 
 ```bash
