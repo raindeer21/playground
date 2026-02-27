@@ -25,16 +25,8 @@ class LiteAgentRuntime:
 
     async def handle_chat(self, request: ChatCompletionRequest) -> ChatCompletionResponse:
         user_text = "\n".join(msg.content for msg in request.messages if msg.role == "user")
-        skill_headers = self.skill_store.headers()
-        skill_plan = await self.gateway_agent.build_plan(request.model, user_text, skill_headers)
-
         selected_skill_headers = []
         selected_skills: list[str] = []
-        for skill_name in skill_plan.required_skills:
-            skill_manifest = self.skill_store.get(skill_name)
-            if skill_manifest and skill_name not in selected_skills:
-                selected_skills.append(skill_name)
-                selected_skill_headers.append(skill_manifest.header)
 
         execution_history: list[dict] = []
         final_action: GatewayNextAction | None = None
@@ -147,7 +139,7 @@ class LiteAgentRuntime:
             choices=[ChatCompletionChoice(message=assistant_message)],
             usage=upstream_usage,
             gateway_plan={
-                "summary": skill_plan.summary,
+                "summary": final_action.summary if final_action else "No execution output.",
                 "selected_skills": selected_skills,
                 "execution_summary": final_action.summary if final_action else "No execution output.",
                 "is_done": final_action.is_done if final_action else False,
