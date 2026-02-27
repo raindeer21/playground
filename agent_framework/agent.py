@@ -25,8 +25,8 @@ class LiteAgentRuntime:
 
     async def handle_chat(self, request: ChatCompletionRequest) -> ChatCompletionResponse:
         user_text = "\n".join(msg.content for msg in request.messages if msg.role == "user")
-        selected_skill_headers = []
-        selected_skills: list[str] = []
+        selected_skills: dict[str, str] = {}
+        available_skills = self.skill_store.headers()
         llm_requested_full_skills: set[str] = set()
 
         execution_history: list[dict] = []
@@ -36,22 +36,19 @@ class LiteAgentRuntime:
             next_action = await self.gateway_agent.decide_next_action(
                 request.model,
                 user_text,
-                selected_skill_headers,
+                [{"name": name, "content": content} for name, content in selected_skills.items()],
+                available_skills,
                 self.tool_registry.list_specs(),
                 execution_history,
             )
             final_action = next_action
 
-            if next_action.action:
-                for skill in next_action.action.required_skills:
-                    if skill not in selected_skills:
-                        selected_skills.append(skill)
-                        skill_manifest = self.skill_store.get(skill)
-                        if skill_manifest:
-                            selected_skill_headers.append(skill_manifest.header)
-
             if next_action.decision == "ask_for_skill" and next_action.action:
-                llm_requested_full_skills.update(next_action.action.required_skills)
+                for skill_name in next_action.action.required_skills:
+                    llm_requested_full_skills.add(skill_name)
+                    skill_manifest = self.skill_store.get(skill_name)
+                    if skill_manifest:
+                        selected_skills[skill_name] = skill_manifest.body
 
             if next_action.is_done:
                 break
@@ -91,10 +88,11 @@ class LiteAgentRuntime:
             )
 
         requested_full_skills = bool(request.metadata.get("include_full_skills", False))
-        include_full_for_skills = set(selected_skills) if requested_full_skills else set(llm_requested_full_skills)
+        all_available_skill_names = {header["name"] for header in available_skills if "name" in header}
+        include_full_for_skills = all_available_skill_names if requested_full_skills else set(llm_requested_full_skills)
 
         system_messages = []
-        for skill_name in selected_skills:
+        for skill_name in all_available_skill_names:
             skill_manifest = self.skill_store.get(skill_name)
             if not skill_manifest:
                 continue
@@ -133,7 +131,7 @@ class LiteAgentRuntime:
         if include_full_for_skills:
             full_skills = {
                 name: self.skill_store.get(name).body
-                for name in selected_skills
+                for name in all_available_skill_names
                 if name in include_full_for_skills and self.skill_store.get(name)
             }
 
@@ -145,13 +143,13 @@ class LiteAgentRuntime:
             usage=upstream_usage,
             gateway_plan={
                 "summary": final_action.summary if final_action else "No execution output.",
-                "selected_skills": selected_skills,
+                "selected_skills": list(selected_skills.keys()),
                 "execution_summary": final_action.summary if final_action else "No execution output.",
                 "is_done": final_action.is_done if final_action else False,
                 "decision": final_action.decision if final_action else None,
                 "last_action": final_action.action.model_dump() if final_action and final_action.action else None,
                 "execution_history": execution_history,
             },
-            skill_headers=[self.skill_store.get(name).header for name in selected_skills if self.skill_store.get(name)],
+            skill_headers=available_skills,
             full_skills=full_skills,
         )

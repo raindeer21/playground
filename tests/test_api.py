@@ -11,6 +11,7 @@ class FakeLLMClient:
         system_text = "\n".join(m.get("content", "") for m in messages if m.get("role") == "system").lower()
 
         if "execution coordinator" in system_text:
+            assert "single best next step" in system_text
             request_blob = json.loads(messages[-1]["content"])
             tool_specs = request_blob.get("tool_specs", [])
             assert tool_specs and tool_specs[0]["name"] == "WebRequest"
@@ -18,6 +19,9 @@ class FakeLLMClient:
             assert tool_specs[0]["args_schema"]["required"] == ["url"]
             execution_history = request_blob.get("execution_history", [])
             if not execution_history:
+                assert "selected_skills" not in request_blob
+                assert "available_skills" in request_blob
+                assert "execution_history" not in request_blob
                 return {
                     "choices": [
                         {
@@ -43,6 +47,12 @@ class FakeLLMClient:
                     ],
                     "usage": {"prompt_tokens": 1, "completion_tokens": 2, "total_tokens": 3},
                 }
+
+            assert "selected_skills" not in request_blob
+            assert any(skill["name"] == "repo-assistant" for skill in request_blob["available_skills"])
+            assert request_blob["execution_history"][0]["step_id"] == "step-1"
+            assert request_blob["previous_step_context"]["previous_action"]["step_id"] == "step-1"
+            assert request_blob["previous_step_context"]["previous_result"]["status"] == "error"
 
             return {
                 "choices": [
@@ -85,12 +95,12 @@ def test_chat_completion_returns_skill_headers_by_default():
     payload = response.json()
 
     assert payload["choices"][0]["message"]["content"] == "example response"
-    assert payload["gateway_plan"]["selected_skills"] == ["repo-assistant"]
+    assert payload["gateway_plan"]["selected_skills"] == []
     assert payload["gateway_plan"]["is_done"] is True
     assert payload["gateway_plan"]["decision"] == "final_response"
     assert payload["gateway_plan"]["execution_history"][0]["tool_name"] == "WebRequest"
     assert payload["gateway_plan"]["execution_history"][0]["tool_result"]["status"] == "error"
-    assert payload["skill_headers"][0]["name"] == "repo-assistant"
+    assert any(skill["name"] == "repo-assistant" for skill in payload["skill_headers"])
     assert payload["full_skills"] is None
 
 
@@ -121,10 +131,13 @@ class AskForSkillThenFinishLLMClient:
         system_text = "\n".join(m.get("content", "") for m in messages if m.get("role") == "system").lower()
 
         if "execution coordinator" in system_text:
+            assert "single best next step" in system_text
             request_blob = json.loads(messages[-1]["content"])
             execution_history = request_blob.get("execution_history", [])
-
             if not execution_history:
+                assert "selected_skills" not in request_blob
+                assert "available_skills" in request_blob
+                assert "execution_history" not in request_blob
                 return {
                     "choices": [
                         {
@@ -150,6 +163,13 @@ class AskForSkillThenFinishLLMClient:
                     ],
                     "usage": {"prompt_tokens": 1, "completion_tokens": 2, "total_tokens": 3},
                 }
+
+            assert request_blob["selected_skills"][0]["name"] == "repo-assistant"
+            assert "# Repo Assistant" in request_blob["selected_skills"][0]["content"]
+            assert any(skill["name"] == "repo-assistant" for skill in request_blob["available_skills"])
+            assert "tool_name" not in request_blob["execution_history"][0]
+            assert request_blob["previous_step_context"]["previous_action"]["step_id"] == "step-1"
+            assert request_blob["previous_step_context"]["previous_result"]["status"] == "skipped"
 
             return {
                 "choices": [
