@@ -10,24 +10,6 @@ class FakeLLMClient:
         messages = payload.get("messages", [])
         system_text = "\n".join(m.get("content", "") for m in messages if m.get("role") == "system").lower()
 
-        if "planning gateway" in system_text:
-            return {
-                "choices": [
-                    {
-                        "message": {
-                            "role": "assistant",
-                            "content": json.dumps(
-                                {
-                                    "summary": "Select repo skill for this task.",
-                                    "required_skills": ["repo-assistant"],
-                                }
-                            ),
-                        }
-                    }
-                ],
-                "usage": {"prompt_tokens": 1, "completion_tokens": 2, "total_tokens": 3},
-            }
-
         if "execution coordinator" in system_text:
             request_blob = json.loads(messages[-1]["content"])
             execution_history = request_blob.get("execution_history", [])
@@ -45,7 +27,7 @@ class FakeLLMClient:
                                             "step_id": "step-1",
                                             "title": "Inspect repo",
                                             "objective": "Inspect repository status",
-                                            "required_skills": [],
+                                            "required_skills": ["repo-assistant"],
                                             "tool_name": "WebRequest",
                                             "tool_payload": {"method": "GET"},
                                         },
