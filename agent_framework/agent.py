@@ -27,6 +27,7 @@ class LiteAgentRuntime:
         user_text = "\n".join(msg.content for msg in request.messages if msg.role == "user")
         selected_skill_headers = []
         selected_skills: list[str] = []
+        llm_requested_full_skills: set[str] = set()
 
         execution_history: list[dict] = []
         final_action: GatewayNextAction | None = None
@@ -36,7 +37,7 @@ class LiteAgentRuntime:
                 request.model,
                 user_text,
                 selected_skill_headers,
-                self.tool_registry.list_names(),
+                self.tool_registry.list_specs(),
                 execution_history,
             )
             final_action = next_action
@@ -48,6 +49,9 @@ class LiteAgentRuntime:
                         skill_manifest = self.skill_store.get(skill)
                         if skill_manifest:
                             selected_skill_headers.append(skill_manifest.header)
+
+            if next_action.decision == "ask_for_skill" and next_action.action:
+                llm_requested_full_skills.update(next_action.action.required_skills)
 
             if next_action.is_done:
                 break
@@ -87,13 +91,14 @@ class LiteAgentRuntime:
             )
 
         requested_full_skills = bool(request.metadata.get("include_full_skills", False))
+        include_full_for_skills = set(selected_skills) if requested_full_skills else set(llm_requested_full_skills)
 
         system_messages = []
         for skill_name in selected_skills:
             skill_manifest = self.skill_store.get(skill_name)
             if not skill_manifest:
                 continue
-            if requested_full_skills:
+            if skill_name in include_full_for_skills:
                 content = skill_manifest.body
             else:
                 content = (
@@ -125,11 +130,11 @@ class LiteAgentRuntime:
             upstream_usage = upstream.get("usage", {})
 
         full_skills = None
-        if requested_full_skills:
+        if include_full_for_skills:
             full_skills = {
                 name: self.skill_store.get(name).body
                 for name in selected_skills
-                if self.skill_store.get(name)
+                if name in include_full_for_skills and self.skill_store.get(name)
             }
 
         return ChatCompletionResponse(

@@ -12,6 +12,10 @@ class FakeLLMClient:
 
         if "execution coordinator" in system_text:
             request_blob = json.loads(messages[-1]["content"])
+            tool_specs = request_blob.get("tool_specs", [])
+            assert tool_specs and tool_specs[0]["name"] == "WebRequest"
+            assert tool_specs[0]["description"] == "Make an HTTP request with method, url, headers, and payload"
+            assert tool_specs[0]["args_schema"]["required"] == ["url"]
             execution_history = request_blob.get("execution_history", [])
             if not execution_history:
                 return {
@@ -107,5 +111,87 @@ def test_chat_completion_returns_full_skills_when_requested():
 
     assert response.status_code == 200
     payload = response.json()
+    assert "repo-assistant" in payload["full_skills"]
+    assert "# Repo Assistant" in payload["full_skills"]["repo-assistant"]
+
+
+class AskForSkillThenFinishLLMClient:
+    async def chat_completion(self, payload):
+        messages = payload.get("messages", [])
+        system_text = "\n".join(m.get("content", "") for m in messages if m.get("role") == "system").lower()
+
+        if "execution coordinator" in system_text:
+            request_blob = json.loads(messages[-1]["content"])
+            execution_history = request_blob.get("execution_history", [])
+
+            if not execution_history:
+                return {
+                    "choices": [
+                        {
+                            "message": {
+                                "role": "assistant",
+                                "content": json.dumps(
+                                    {
+                                        "summary": "Need full skill details before acting.",
+                                        "decision": "ask_for_skill",
+                                        "action": {
+                                            "step_id": "step-1",
+                                            "title": "Load skill",
+                                            "objective": "Load repo-assistant full skill.",
+                                            "required_skills": ["repo-assistant"],
+                                            "tool_name": None,
+                                            "tool_payload": {},
+                                        },
+                                        "final_response": None,
+                                    }
+                                ),
+                            }
+                        }
+                    ],
+                    "usage": {"prompt_tokens": 1, "completion_tokens": 2, "total_tokens": 3},
+                }
+
+            return {
+                "choices": [
+                    {
+                        "message": {
+                            "role": "assistant",
+                            "content": json.dumps(
+                                {
+                                    "summary": "Done after reading skill.",
+                                    "decision": "final_response",
+                                    "action": None,
+                                    "final_response": "done with full skill",
+                                }
+                            ),
+                        }
+                    }
+                ],
+                "usage": {"prompt_tokens": 1, "completion_tokens": 2, "total_tokens": 3},
+            }
+
+        return {"choices": [{"message": {"role": "assistant", "content": "fallback"}}], "usage": {}}
+
+
+def test_chat_completion_returns_full_skills_when_llm_requests_skill():
+    app = create_app()
+    app.state.runtime.llm_client = AskForSkillThenFinishLLMClient()
+    app.state.runtime.gateway_agent.llm_client = app.state.runtime.llm_client
+
+    client = TestClient(app)
+    response = client.post(
+        "/api/v1/chat",
+        json={
+            "model": "qwen3-32b",
+            "messages": [{"role": "user", "content": "review repository and run tests"}],
+            "metadata": {},
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+
+    assert payload["choices"][0]["message"]["content"] == "done with full skill"
+    assert payload["gateway_plan"]["decision"] == "final_response"
     assert "repo-assistant" in payload["full_skills"]
     assert "# Repo Assistant" in payload["full_skills"]["repo-assistant"]

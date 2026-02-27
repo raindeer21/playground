@@ -11,6 +11,7 @@ class ToolConfig(BaseModel):
     name: str
     kind: str = "mcp"
     description: str = ""
+    args_schema: dict[str, Any] = Field(default_factory=dict)
     settings: dict[str, Any] = Field(default_factory=dict)
 
 
